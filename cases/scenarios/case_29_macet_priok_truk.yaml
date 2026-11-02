@@ -1,0 +1,97 @@
+# ============================================================================
+# Model A: arus truk menuju NPCT1 (satuan: truk per hari)
+# Kasus nyata: kemacetan akses Pelabuhan Tanjung Priok, 16-18 April 2025.
+#
+# DATA DARI BERITA : S->V = 4.000 (volume saat kejadian), D->T = 2.500
+#                    (rata-rata harian normal NPCT1).
+# ASUMSI ILUSTRATIF: semua kapasitas dan jarak lain. Ganti dengan data PKJI /
+#                    HCM / Dishub / Jasa Marga sebelum dipakai di laporan.
+# weight   = jarak (km), dipakai MST. weight 0 = sisi virtual (bukan jalan fisik).
+# capacity = kapasitas (truk/hari), dipakai max flow. capacity 0 = jalan ada
+#            tetapi tidak dilewati arus truk pada kondisi dasar.
+# ============================================================================
+case_id: "case_29_macet_priok_truk"
+title: "Macet Akses Priok: Arus Truk Menuju NPCT1"
+description: >
+  Tiga kapal sandar bersamaan di NPCT1 membuat truk yang masuk naik dari
+  rata-rata kurang dari 2.500 menjadi lebih dari 4.000 per hari. Antrean truk
+  mengular di Jl. Yos Sudarso dan menjalar ke Tol JORR dan MBZ, sehingga
+  ambulans terjebak.
+
+nodes:
+  - {id: 0, label: "Sumber (semu)",                 pos: [0.0, 2.0]}
+  - {id: 1, label: "Volume truk 4.000/hari",        pos: [1.2, 2.0]}
+  - {id: 2, label: "Tol JORR",                      pos: [2.6, 4.0]}
+  - {id: 3, label: "Tol Layang MBZ",                pos: [2.6, 3.0]}
+  - {id: 4, label: "Akses tol pelabuhan",           pos: [4.0, 3.5]}
+  - {id: 5, label: "Jl. Yos Sudarso",               pos: [2.6, 2.0]}
+  - {id: 6, label: "Jl. Cilincing / RE Martadinata", pos: [2.6, 1.0]}
+  - {id: 7, label: "Gerbang NPCT1",                 pos: [5.6, 2.0]}
+  - {id: 8, label: "Truk terlayani NPCT1",          pos: [7.2, 2.0]}
+
+edges:
+  # --- sisi virtual (suplai) ---
+  - {from: 0, to: 1, weight: 0.0, capacity: 4000}   # data berita: volume saat kejadian
+  - {from: 1, to: 2, weight: 0.0, capacity: 1500}
+  - {from: 1, to: 3, weight: 0.0, capacity: 1000}
+  - {from: 1, to: 5, weight: 0.0, capacity: 2000}
+  - {from: 1, to: 6, weight: 0.0, capacity: 1000}
+  - {from: 1, to: 7, weight: 0.0, capacity: 0}      # NPEA, belum ada (kapasitas 0)
+  # --- sisi fisik ---
+  - {from: 2, to: 4, weight: 4.0, capacity: 700}    # Tol JORR -> akses tol
+  - {from: 3, to: 4, weight: 3.0, capacity: 500}    # Tol MBZ  -> akses tol
+  - {from: 4, to: 7, weight: 2.0, capacity: 1000}   # akses tol -> gerbang
+  - {from: 4, to: 5, weight: 1.5, capacity: 200}    # akses tol -> Yos Sudarso
+  - {from: 5, to: 7, weight: 1.0, capacity: 1800}   # Yos Sudarso -> gerbang
+  - {from: 6, to: 7, weight: 1.8, capacity: 1000}   # Cilincing -> gerbang
+  - {from: 7, to: 8, weight: 0.5, capacity: 2500}   # gerbang NPCT1 (data berita)
+  # --- jalan ada, tidak dilalui arus truk pada model (hanya untuk MST) ---
+  - {from: 2, to: 3, weight: 2.5, capacity: 0}
+  - {from: 5, to: 6, weight: 2.2, capacity: 0}
+
+execution_plan:
+  start_node: 0
+  goal_node: 8
+  algorithm: maxflow
+  # Alur cerita KUMULATIF untuk runner template (tiap event menimpa kapasitas
+  # sebelumnya). Perkiraan max flow setelah tiap event: 2.500, 4.000, 2.500,
+  # 4.000, 4.000. Delapan skenario TERPISAH (K1-K8) ada di blok `scenarios`.
+  events:
+    - step: 1
+      type: "DYNAMIC_EDGE_CAPACITY"
+      target_edge: [1, 7]
+      new_capacity: 500
+      description: "Jalan baru NPEA dibuka: kapasitas Volume -> Gerbang NPCT1 naik dari 0 jadi 500 truk/hari."
+    - step: 2
+      type: "DYNAMIC_EDGE_CAPACITY"
+      target_edge: [7, 8]
+      new_capacity: 4000
+      description: "Bongkar muat dan gerbang NPCT1 diperbesar: kapasitas naik dari 2.500 jadi 4.000 truk/hari."
+    - step: 3
+      type: "DYNAMIC_EDGE_CAPACITY"
+      target_edge: [5, 7]
+      new_capacity: 0
+      description: "Jl. Yos Sudarso ditutup: kapasitas turun dari 1.800 jadi 0 truk/hari."
+    - step: 4
+      type: "DYNAMIC_EDGE_CAPACITY"
+      target_edge: [5, 7]
+      new_capacity: 2400
+      description: "Contraflow di Jl. Yos Sudarso: kapasitas naik dari 0 jadi 2.400 truk/hari."
+    - step: 5
+      type: "DYNAMIC_EDGE_CAPACITY"
+      target_edge: [2, 4]
+      new_capacity: 0
+      description: "Tol JORR macet: kapasitas ke akses tol turun dari 700 jadi 0 truk/hari."
+
+# Delapan skenario independen (tiap skenario dihitung dari kondisi dasar K1).
+# Dibaca oleh scripts/run_priok.py dan tests/test_priok.py; kunci ini diabaikan
+# oleh loader template.
+scenarios:
+  - {id: K1, name: "Kondisi saat kemacetan",          overrides: []}
+  - {id: K2, name: "Tambah jalan NPEA saja",          overrides: [{edge: [1, 7], capacity: 500}]}
+  - {id: K3, name: "Gerbang NPCT1 diperbesar (4.000)", overrides: [{edge: [7, 8], capacity: 4000}]}
+  - {id: K4, name: "Gerbang 4.000 + NPEA",            overrides: [{edge: [7, 8], capacity: 4000}, {edge: [1, 7], capacity: 500}]}
+  - {id: K5, name: "Gerbang 4.000, Yos Sudarso ditutup", overrides: [{edge: [7, 8], capacity: 4000}, {edge: [5, 7], capacity: 0}]}
+  - {id: K6, name: "Gerbang 4.000, contraflow Yos Sudarso", overrides: [{edge: [7, 8], capacity: 4000}, {edge: [5, 7], capacity: 2400}]}
+  - {id: K7, name: "Gerbang 4.000, Tol JORR macet",   overrides: [{edge: [7, 8], capacity: 4000}, {edge: [2, 4], capacity: 0}]}
+  - {id: K8, name: "Gerbang 4.000, Tol MBZ macet",    overrides: [{edge: [7, 8], capacity: 4000}, {edge: [3, 4], capacity: 0}]}
