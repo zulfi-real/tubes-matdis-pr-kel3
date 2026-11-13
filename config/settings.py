@@ -16,10 +16,10 @@ JSON_INDENT = 2
 ENSURE_ASCII = False
 
 # --- DEFAULT SCENARIO ---
-DEFAULT_YAML_SCENARIO = CASES_DIR / "case_08_warga_nonton.yaml"
+DEFAULT_YAML_SCENARIO = CASES_DIR / "case_29_macet_priok_truk.yaml"
 
 # --- DEFAULT ALGORITHM (registry key atau alias kategori) ---
-DEFAULT_ALGORITHM = "pathfinding"
+DEFAULT_ALGORITHM = "max_flow"
 
 # --- MULTI-SCENARIO BATCH ---
 SCENARIO_FILE_PATTERNS = ("*.yaml", "*.yml")
