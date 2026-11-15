@@ -1,105 +1,187 @@
+"""Max flow dengan algoritma Push-Relabel (Preflow-Push), murni Python."""
+from __future__ import annotations
+
+import os
+import sys
 from collections import deque
-import networkx as nx
-from core.base_algorithm import BaseGraphAlgorithm
-from core.graph_model import SpatialGraphModel
+from typing import Dict, List, Optional, Set
+
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+from algorithms.maxflow.maxflow_core import (
+    EPS,
+    Edge,
+    LogFn,
+    MaxFlowResult,
+    _build,
+    _finish,
+    _log_done,
+    _name,
+    _num,
+)
 
 
-class PushRelabel(BaseGraphAlgorithm):
-    """Algoritma Advanced Maximum Flow (Push-Relabel / Preflow-Push Variant)."""
+def push_relabel(
+    edges: List[Edge],
+    s: int,
+    t: int,
+    labels: Optional[dict] = None,
+    log: LogFn = None,
+    unit: str = "truk/hari",
+) -> MaxFlowResult:
+    cap, orig = _build(edges)
+    steps: List[dict] = []
 
-    def __init__(self, model: SpatialGraphModel):
-        super().__init__(model)
-        self.residual = nx.DiGraph()
-        self.height = {}
-        self.excess = {}
+    if s == t:
+        res = _finish(cap, orig, s, steps)
+        _log_done(log, labels, res, unit)
+        return res
 
-    def run(self, source_node: int, sink_node: int) -> tuple:
-        self.residual.clear()
-        self.residual.add_nodes_from(self.graph.nodes())
+    nodes: Set[int] = {s, t}
+    for u, v in orig:
+        nodes.add(u)
+        nodes.add(v)
 
-        for u, v, data in self.graph.edges(data=True):
-            cap = float(data.get("capacity", data.get("weight", 1.0)))
-            self.residual.add_edge(u, v, capacity=cap)
-            if not self.residual.has_edge(v, u):
-                self.residual.add_edge(v, u, capacity=0.0)
+    n = len(nodes)
+    height: Dict[int, int] = {u: 0 for u in nodes}
+    excess: Dict[int, float] = {u: 0.0 for u in nodes}
+    height[s] = n
 
-        nodes = list(self.residual.nodes())
-        n = len(nodes)
-
-        self.height = {node: 0 for node in nodes}
-        self.excess = {node: 0.0 for node in nodes}
-
-        self.height[source_node] = n
-
-        self.log_step(
-            event_type="INITIALIZATION",
-            state_mutations={"source": source_node, "sink": sink_node, "max_flow": 0.0},
+    if log:
+        log(
+            "INITIALIZE",
+            f"Set aliran awal dari {_name(labels, s)} ke {_name(labels, t)} = 0, "
+            f"tinggi sumber = {n}. Jumlah sisi = {len(orig)}.",
+            source=s,
+            sink=t,
+            height=n,
         )
 
-        for v in list(self.residual.neighbors(source_node)):
-            cap = self.residual[source_node][v]["capacity"]
-            if cap > 0:
-                self.residual[source_node][v]["capacity"] = 0.0
-                self.residual[v][source_node]["capacity"] += cap
-                self.excess[v] += cap
-                self.excess[source_node] -= cap
+    active: deque[int] = deque()
+    in_queue: Set[int] = set()
 
-        active = deque([v for v in nodes if v != source_node and v != sink_node and self.excess[v] > 0])
-
-        def push(u, v):
-            send = min(self.excess[u], self.residual[u][v]["capacity"])
-            self.residual[u][v]["capacity"] -= send
-            self.residual[v][u]["capacity"] += send
-            self.excess[u] -= send
-            self.excess[v] += send
-            if v != source_node and v != sink_node and v not in active and self.excess[v] > 0:
+    for v, c in list(cap[s].items()):
+        if c > EPS and v != s:
+            cap[s][v] -= c
+            cap[v][s] += c
+            excess[v] += c
+            excess[s] -= c
+            steps.append({"action": "PREFLOW", "u": s, "v": v, "delta": c})
+            if log:
+                log(
+                    "PREFLOW",
+                    f"Preflow awal {_name(labels, s)} -> {_name(labels, v)} "
+                    f"sebesar {_num(c)} {unit}.",
+                    u=s,
+                    v=v,
+                    delta=c,
+                )
+            if v != s and v != t and v not in in_queue:
                 active.append(v)
+                in_queue.add(v)
 
-        def relabel(u):
-            min_height = float("inf")
-            for v in self.residual.neighbors(u):
-                if self.residual[u][v]["capacity"] > 0:
-                    min_height = min(min_height, self.height[v])
-            if min_height < float("inf"):
-                self.height[u] = min_height + 1
+    while active:
+        u = active.popleft()
+        in_queue.discard(u)
 
-        while active:
-            u = active.popleft()
-            old_excess = self.excess[u]
-            
-            # Coba dorong aliran (push) ke tetangga yang lebih rendah
+        while excess[u] > EPS:
             pushed = False
-            for v in list(self.residual.neighbors(u)):
-                if self.excess[u] > 0 and self.residual[u][v]["capacity"] > 0 and self.height[u] == self.height[v] + 1:
-                    push(u, v)
-                    if self.excess[u] == 0:
-                        pushed = True
+            for v, r_cap in list(cap[u].items()):
+                if v == u:
+                    continue
+                if r_cap > EPS and height[u] == height[v] + 1:
+                    delta = min(excess[u], r_cap)
+                    cap[u][v] -= delta
+                    cap[v][u] += delta
+                    excess[u] -= delta
+                    excess[v] += delta
+                    pushed = True
+                    steps.append({"action": "PUSH", "u": u, "v": v, "delta": delta})
+
+                    if log:
+                        log(
+                            "PUSH",
+                            f"Push {_num(delta)} {unit} dari {_name(labels, u)} ke {_name(labels, v)} "
+                            f"(sisa excess {_name(labels, u)} = {_num(excess[u])}).",
+                            u=u,
+                            v=v,
+                            delta=delta,
+                            excess=excess[u],
+                        )
+
+                    if v != s and v != t and v not in in_queue and excess[v] > EPS:
+                        active.append(v)
+                        in_queue.add(v)
+
+                    if excess[u] <= EPS:
                         break
 
-            if self.excess[u] > 0:
-                # Jika tidak bisa push, lakukan relabel
-                relabel(u)
-                active.append(u)
-
-            if self.excess[u] != old_excess:
-                self.log_step(
-                    event_type="PUSH_RELABEL_STEP",
-                    state_mutations={"active_node": u, "excess": self.excess[u]},
+            if excess[u] > EPS and not pushed:
+                min_h = min(
+                    (height[v] for v, r_cap in cap[u].items() if v != u and r_cap > EPS),
+                    default=None,
                 )
+                if min_h is None:
+                    break
+                old_h = height[u]
+                height[u] = min_h + 1
+                steps.append(
+                    {
+                        "action": "RELABEL",
+                        "u": u,
+                        "old_height": old_h,
+                        "new_height": height[u],
+                    }
+                )
+                if log:
+                    log(
+                        "RELABEL",
+                        f"Relabel {_name(labels, u)}: tinggi naik dari {old_h} menjadi {height[u]}.",
+                        u=u,
+                        old_height=old_h,
+                        new_height=height[u],
+                    )
 
-        max_flow = self.excess[sink_node]
+    res = _finish(cap, orig, s, steps)
+    _log_done(log, labels, res, unit)
+    return res
 
-        return [], float(max_flow)
 
-    def handle_dynamic_event(self, event_data: dict) -> tuple:
-        
-        edge = event_data.get("edge")
-        new_capacity = event_data.get("new_weight", event_data.get("new_capacity", 0.0))
-        start_node = event_data.get("start")
-        goal_node = event_data.get("goal")
+try:
+    from algorithms.maxflow._flow_adapter import FlowAdapter
+    from algorithms.registry import AlgorithmRegistry
 
-        if edge and self.graph.has_edge(edge[0], edge[1]):
-            self.graph[edge[0]][edge[1]]["capacity"] = float(new_capacity)
+    class PushRelabelMaxFlow(FlowAdapter):
+        def _solve(self, edges, s, t, labels, log):
+            return push_relabel(edges, s, t, labels, log)
 
-        new_flow = self.run(start_node, goal_node)[1]
-        return [], float(new_flow)
+    AlgorithmRegistry.register("push_relabel", PushRelabelMaxFlow)
+except ImportError:
+    pass
+
+
+if __name__ == "__main__":
+    labels = {
+        0: "Suplai_Truk",
+        1: "Gerbang_Kawasan",
+        2: "Jl_Yos_Sudarso",
+        3: "Jl_Cilincing",
+        4: "Gerbang_NPCT1",
+    }
+    edges = [
+        (0, 1, 4000),
+        (1, 2, 1500),
+        (1, 3, 1000),
+        (2, 4, 1500),
+        (3, 4, 1000),
+    ]
+
+    def print_log(action, narrative, **data):
+        print(f"[{action}] {narrative}")
+
+    hasil = push_relabel(edges, s=0, t=4, labels=labels, log=print_log)
+    print("\n--- RINGKASAN ---")
+    print("Aliran Maksimum :", hasil.value, "truk/hari")
+    print("Sisi Min-Cut    :", hasil.cut_edges)
